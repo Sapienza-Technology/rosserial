@@ -46,7 +46,7 @@ import threading
 import time
 
 from serial import Serial, SerialException, SerialTimeoutException
-
+import serial 
 import roslib
 import rospy
 from std_msgs.msg import Time
@@ -367,12 +367,33 @@ class SerialClient(object):
             # open a specific port
             while not rospy.is_shutdown():
                 try:
+
+                    self.port = Serial()
+                    self.port.port = port
+                    self.port.baudrate = baud
+                    self.port.timeout = self.timeout
+                    self.port.dsrdtr = False
+                    self.port.open()
+
+                    self.port.parity = serial.PARITY_NONE
+                    self.port.parity = serial.PARITY_ODD
+                    self.port.parity = serial.PARITY_NONE
+
+                    #with the port open reset the arduino
+                    self.port.setDTR(True)
+                    time.sleep(0.5)
+                    self.port.flushInput()
+                    self.port.setDTR(False)
+                    time.sleep(0.5)
+
+                    #* Original code
                     if self.fix_pyserial_for_test:
                         # see https://github.com/pyserial/pyserial/issues/59
                         self.port = Serial(port, baud, timeout=self.timeout, write_timeout=10, rtscts=True, dsrdtr=True)
                     else:
                         self.port = Serial(port, baud, timeout=self.timeout, write_timeout=10)
                     break
+                    print("finished configuring serial port")
                 except SerialException as e:
                     rospy.logerr("Error opening serial: %s", e)
                     time.sleep(3)
@@ -462,6 +483,7 @@ class SerialClient(object):
                     rospy.logerr("Lost sync with device, restarting...")
                 else:
                     rospy.logerr("Unable to sync with device; possible link problem or link software version mismatch such as hydro rosserial_python with groovy Arduino")
+                    rospy.logerr("Some possible causes:\n 1. The board has the baud rate not set up correctly.\n2. The board has run into a runtime error.")
                 self.lastsync_lost = rospy.Time.now()
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, ERROR_NO_SYNC)
                 self.requestTopics()
@@ -473,6 +495,7 @@ class SerialClient(object):
             try:
                 with self.read_lock:
                     if self.port.inWaiting() < 1:
+                        
                         time.sleep(0.001)
                         continue
 
@@ -488,7 +511,7 @@ class SerialClient(object):
                 flag[1] = self.tryRead(1)
                 if flag[1] != self.protocol_ver:
                     self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, ERROR_MISMATCHED_PROTOCOL)
-                    rospy.logerr("Mismatched protocol version in packet (%s): lost sync or rosserial_python is from different ros release than the rosserial client" % repr(flag[1]))
+                    rospy.logerr("Mismatched protocol version in packet (%s): maybe wrong baud rate or port, lost sync or rosserial_python is from different ros release than the rosserial client" % repr(flag[1]))
                     protocol_ver_msgs = {
                             self.protocol_ver1: 'Rev 0 (rosserial 0.4 and earlier)',
                             self.protocol_ver2: 'Rev 1 (rosserial 0.5+)',
@@ -755,7 +778,7 @@ class SerialClient(object):
         """
         length = len(msg_bytes)
         if self.buffer_in > 0 and length > self.buffer_in:
-            rospy.logerr("Message from ROS network dropped: message larger than buffer.\n%s" % msg)
+            rospy.logerr("Message from ROS network dropped: message larger than buffer.\n%s" % msg_bytes)
             return -1
         else:
             # frame : header (1b) + version (1b) + msg_len(2b) + msg_len_chk(1b) + topic_id(2b) + msg(nb) + msg_topic_id_chk(1b)
