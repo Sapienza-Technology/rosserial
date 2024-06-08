@@ -337,6 +337,11 @@ class SerialClient(object):
         self.write_queue = queue.Queue()
         self.write_thread = None
 
+        self.port=port
+
+        self.serial_port=port
+        self.serial_baudrate=baud
+
         self.lastsync = rospy.Time(0)
         self.lastsync_lost = rospy.Time(0)
         self.lastsync_success = rospy.Time(0)
@@ -368,23 +373,7 @@ class SerialClient(object):
             while not rospy.is_shutdown():
                 try:
 
-                    self.port = Serial()
-                    self.port.port = port
-                    self.port.baudrate = baud
-                    self.port.timeout = self.timeout
-                    self.port.dsrdtr = False
-                    self.port.open()
-
-                    self.port.parity = serial.PARITY_NONE
-                    self.port.parity = serial.PARITY_ODD
-                    self.port.parity = serial.PARITY_NONE
-
-                    #with the port open reset the arduino
-                    self.port.setDTR(True)
-                    time.sleep(0.5)
-                    self.port.flushInput()
-                    self.port.setDTR(False)
-                    time.sleep(0.5)
+                    self.reset_microcontroller(port, baud, timeout)
 
                     #* Original code
                     if self.fix_pyserial_for_test:
@@ -423,6 +412,27 @@ class SerialClient(object):
         rospy.sleep(2.0)
         self.requestTopics()
         self.lastsync = rospy.Time.now()
+
+    def reset_microcontroller(self, port_name, baud_rate, timeout):
+        # Open the serial port
+        port = serial.Serial()
+        port.port = port_name
+        port.baudrate = baud_rate
+        port.timeout = timeout
+        port.dsrdtr = False
+        port.open()
+
+        # Set parity
+        port.parity = serial.PARITY_NONE
+
+        # Reset the microcontroller
+        port.setDTR(True)  # Pull DTR high to reset
+        time.sleep(0.5)  # Wait for a while
+        port.flushInput()  # Flush the input buffer
+        port.setDTR(False)  # Pull DTR low to let the microcontroller run
+        time.sleep(0.5)  # Wait for a while
+
+        # The microcontroller should now be reset
 
     def requestTopics(self):
         """ Determine topics to subscribe/publish. """
@@ -484,6 +494,9 @@ class SerialClient(object):
                 else:
                     rospy.logerr("Unable to sync with device; possible link problem or link software version mismatch such as hydro rosserial_python with groovy Arduino")
                     rospy.logerr("Some possible causes:\n 1. The board has the baud rate not set up correctly.\n2. The board has run into a runtime error.")
+                    rospy.logwarn("trying to reconnect...")
+                    self.reset_microcontroller(self.serial_port, self.serial_baudrate, self.timeout)
+
                 self.lastsync_lost = rospy.Time.now()
                 self.sendDiagnostics(diagnostic_msgs.msg.DiagnosticStatus.ERROR, ERROR_NO_SYNC)
                 self.requestTopics()
@@ -495,7 +508,6 @@ class SerialClient(object):
             try:
                 with self.read_lock:
                     if self.port.inWaiting() < 1:
-                        
                         time.sleep(0.001)
                         continue
 
